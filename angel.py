@@ -14,10 +14,11 @@ from telegram.ext import (
     ConversationHandler,
 )
 
-# Load environment variables
+# -------------------------
+# Setup
+# -------------------------
 load_dotenv()
 
-# Setup logging
 logging.basicConfig(
     level=logging.INFO,
     format='[%(asctime)s] %(levelname)s - %(message)s',
@@ -86,6 +87,9 @@ def apply_style_to_text(text: str, style: str) -> str:
     return escape_html(text)
 
 
+# -------------------------
+# Build Settings Pages
+# -------------------------
 def build_settings_page(user_data: dict, page: int = 1) -> (str, InlineKeyboardMarkup):
     caption_style = user_data.get("caption_style", "none")
     prefix = user_data.get("prefix", "")
@@ -119,7 +123,7 @@ def build_settings_page(user_data: dict, page: int = 1) -> (str, InlineKeyboardM
         return text, InlineKeyboardMarkup(keyboard)
 
     elif page == 2:
-        text = f"""
+        text = """
 ⚙️ <b>Settings — Page 2 / 3</b>
 
 <b>Extra formats:</b>
@@ -147,6 +151,8 @@ def build_settings_page(user_data: dict, page: int = 1) -> (str, InlineKeyboardM
              InlineKeyboardButton("Set Suffix", callback_data="set:suffix")],
             [InlineKeyboardButton("Set Link Wrap", callback_data="set:link"),
              InlineKeyboardButton("Set Mention", callback_data="set:mention")],
+            [InlineKeyboardButton("🗑 Clear Mention", callback_data="clear:mention"),
+             InlineKeyboardButton("🧹 Clear All Settings", callback_data="confirm:clear_all")],
             [InlineKeyboardButton("🪄 Preview Caption", callback_data="action:preview")],
             [InlineKeyboardButton("⬅️ Back", callback_data="nav:page2"),
              InlineKeyboardButton("✅ Done", callback_data="style:done")]
@@ -172,34 +178,20 @@ I can change video thumbnails/covers and style captions.
 /clear_suffix - Remove saved suffix
 /clear_all - Remove both prefix and suffix
 /clear_link - Remove link wrapping
+/clear_mention - Remove mention text
+/clear_everything - 🧹 Clear all saved settings at once
 """
     await update.message.reply_text(text, parse_mode='HTML')
 
 
-# --- clear commands ---
-async def clear_prefix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.pop("prefix", None)
-    await update.message.reply_text("✅ Prefix cleared!")
-
-
-async def clear_suffix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.pop("suffix", None)
-    await update.message.reply_text("✅ Suffix cleared!")
-
-
-async def clear_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.pop("prefix", None)
-    context.user_data.pop("suffix", None)
-    await update.message.reply_text("✅ Prefix & Suffix cleared!")
-
-
-async def clear_link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.pop("link_wrap", None)
-    await update.message.reply_text("✅ Link wrapping disabled.")
+async def clear_everything_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for key in ["prefix", "suffix", "mention_text", "link_wrap", "caption_style"]:
+        context.user_data.pop(key, None)
+    await update.message.reply_text("🧹 All settings cleared!")
 
 
 # -------------------------
-# Settings Handlers
+# Settings Handler
 # -------------------------
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = context.user_data
@@ -220,12 +212,14 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
     data = query.data or ""
     user_data = context.user_data
 
+    # Navigation
     if data.startswith("nav:"):
         page = int(data[-1])
         text, markup = build_settings_page(user_data, page=page)
         await query.edit_message_text(text, reply_markup=markup, parse_mode='HTML')
         return SETTINGS_MENU
 
+    # Style
     if data.startswith("style:"):
         style = data.split(":", 1)[1]
         if style == "done":
@@ -237,21 +231,50 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
                                       reply_markup=markup, parse_mode='HTML')
         return SETTINGS_MENU
 
+    # Set inputs
     if data.startswith("set:"):
         which = data.split(":", 1)[1]
-        if which == "prefix":
-            await query.edit_message_text("✏️ Send your new Prefix text.")
-            return PREFIX_INPUT
-        elif which == "suffix":
-            await query.edit_message_text("✏️ Send your new Suffix text.")
-            return SUFFIX_INPUT
-        elif which == "link":
-            await query.edit_message_text("🔗 Send the URL to wrap your captions.")
-            return LINK_INPUT
-        elif which == "mention":
-            await query.edit_message_text("💬 Send your custom Mention text (like 'Join my channel - @fjiffyuv').")
-            return MENTION_INPUT
+        prompts = {
+            "prefix": "✏️ Send your new Prefix text.",
+            "suffix": "✏️ Send your new Suffix text.",
+            "link": "🔗 Send the URL to wrap your captions.",
+            "mention": "💬 Send your custom Mention text (like 'Join my channel - @fjiffyuv')."
+        }
+        await query.edit_message_text(prompts[which])
+        return {"prefix": PREFIX_INPUT, "suffix": SUFFIX_INPUT, "link": LINK_INPUT, "mention": MENTION_INPUT}[which]
 
+    # Clear mention
+    if data == "clear:mention":
+        user_data.pop("mention_text", None)
+        text, markup = build_settings_page(user_data, page=3)
+        await query.edit_message_text("✅ Mention text cleared!\n\n" + text, reply_markup=markup, parse_mode='HTML')
+        return SETTINGS_MENU
+
+    # Confirm before clearing all
+    if data == "confirm:clear_all":
+        keyboard = [
+            [InlineKeyboardButton("✅ Yes, Clear All", callback_data="clear:all"),
+             InlineKeyboardButton("❌ No, Cancel", callback_data="cancel:clear_all")]
+        ]
+        await query.edit_message_text("⚠️ Are you sure you want to clear all saved settings?",
+                                      reply_markup=InlineKeyboardMarkup(keyboard))
+        return SETTINGS_MENU
+
+    # Clear all confirmed
+    if data == "clear:all":
+        for key in ["prefix", "suffix", "mention_text", "link_wrap", "caption_style"]:
+            user_data.pop(key, None)
+        text, markup = build_settings_page(user_data, page=3)
+        await query.edit_message_text("🧹 All settings cleared!\n\n" + text, reply_markup=markup, parse_mode='HTML')
+        return SETTINGS_MENU
+
+    # Cancel clear all
+    if data == "cancel:clear_all":
+        text, markup = build_settings_page(user_data, page=3)
+        await query.edit_message_text("❌ Clear all cancelled.\n\n" + text, reply_markup=markup, parse_mode='HTML')
+        return SETTINGS_MENU
+
+    # Preview
     if data.startswith("action:preview"):
         sample = "🔥 The Summer Hikaru Died S01 Ep 07 - 12 [Hindi-English-Japanese] 1080p HEVC 10bit WEB-DL ESub ~ Aᴍɪᴛ ~ [TW4ALL].mkv"
         prefix = user_data.get('prefix', '')
@@ -271,16 +294,12 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
         await query.message.reply_text(f"🪄 <b>Preview:</b>\n{styled}", parse_mode='HTML')
         return SETTINGS_MENU
 
-    if data == "style:none":
-        user_data['caption_style'] = 'none'
-        text, markup = build_settings_page(user_data, page=1)
-        await query.edit_message_text("✅ Style cleared.\n\n" + text, reply_markup=markup, parse_mode='HTML')
-        return SETTINGS_MENU
-
     return SETTINGS_MENU
 
 
-# Input handlers
+# -------------------------
+# Input Handlers
+# -------------------------
 async def prefix_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['prefix'] = update.message.text.strip()
     await update.message.reply_text("✅ Prefix updated.")
@@ -319,7 +338,7 @@ async def cancel_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # -------------------------
-# Thumbnail / Video handlers
+# Thumbnail / Video Handlers
 # -------------------------
 async def view_thumb_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thumb_file_id = context.user_data.get("thumb_file_id")
@@ -411,16 +430,13 @@ def main():
     app.add_handler(CommandHandler("thumb", view_thumb_command))
     app.add_handler(CommandHandler("clear", clear_thumb_command))
     app.add_handler(settings_conv)
-    app.add_handler(CommandHandler("clear_prefix", clear_prefix_command))
-    app.add_handler(CommandHandler("clear_suffix", clear_suffix_command))
-    app.add_handler(CommandHandler("clear_all", clear_all_command))
-    app.add_handler(CommandHandler("clear_link", clear_link_command))
+    app.add_handler(CommandHandler("clear_everything", clear_everything_command))
 
     app.add_handler(MessageHandler(filters.PHOTO, save_thumb))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url_thumb))
     app.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, send_video))
 
-    logger.info("Starting Thumbnail Cover Changer Bot...")
+    logger.info("🚀 Bot is running...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
@@ -431,4 +447,4 @@ if __name__ == "__main__":
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.error(f"Failed to start bot: {e}")
-            
+        
