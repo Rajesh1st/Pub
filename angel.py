@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-SETTINGS_MENU, PREFIX_INPUT, SUFFIX_INPUT = range(3)
+SETTINGS_MENU, PREFIX_INPUT, SUFFIX_INPUT, LINK_INPUT, MENTION_INPUT = range(5)
 
 URL_PATTERN = re.compile(
     r'https?://(?:[a-zA-Z0-9$-_@.&+!*\'(),]|(?:%[0-9a-fA-F]{2}))+'
@@ -68,9 +68,7 @@ def apply_style_to_text(text: str, style: str) -> str:
     if not text:
         return text
     if style == "blockquote":
-        lines = text.splitlines()
-        quoted = "\n".join("› " + ln for ln in lines)
-        return f"<i>{escape_html(quoted)}</i>"
+        return f"<blockquote>{escape_html(text)}</blockquote>"
     if style == "pre":
         return f"<pre>{escape_html(text)}</pre>"
     if style == "bold":
@@ -89,11 +87,10 @@ def apply_style_to_text(text: str, style: str) -> str:
 
 
 def build_settings_page(user_data: dict, page: int = 1) -> (str, InlineKeyboardMarkup):
-    user_id = user_data.get("_id_placeholder", "You")
     caption_style = user_data.get("caption_style", "none")
     prefix = user_data.get("prefix", "")
     suffix = user_data.get("suffix", "")
-    mention_on = user_data.get("mention_enabled", True)
+    mention_text = user_data.get("mention_text", "")
     link_wrap = user_data.get("link_wrap", None)
 
     if page == 1:
@@ -104,7 +101,7 @@ def build_settings_page(user_data: dict, page: int = 1) -> (str, InlineKeyboardM
 <b>Prefix:</b> <code>{prefix or '-'}</code>
 <b>Suffix:</b> <code>{suffix or '-'}</code>
 <b>Link wrap:</b> <code>{link_wrap or '-'}</code>
-<b>Mention (two newlines):</b> <code>{'On' if mention_on else 'Off'}</code>
+<b>Mention text:</b> <code>{mention_text or '-'}</code>
 
 <b>Choose a basic caption style:</b>
 """
@@ -143,14 +140,14 @@ def build_settings_page(user_data: dict, page: int = 1) -> (str, InlineKeyboardM
 <b>Prefix:</b> <code>{prefix or '-'}</code>
 <b>Suffix:</b> <code>{suffix or '-'}</code>
 <b>Link wrap:</b> <code>{link_wrap or '-'}</code>
-<b>Mention (two newlines):</b> <code>{'On' if mention_on else 'Off'}</code>
+<b>Mention text:</b> <code>{mention_text or '-'}</code>
 """
         keyboard = [
             [InlineKeyboardButton("Set Prefix", callback_data="set:prefix"),
              InlineKeyboardButton("Set Suffix", callback_data="set:suffix")],
             [InlineKeyboardButton("Set Link Wrap", callback_data="set:link"),
-             InlineKeyboardButton("🪄 Preview Caption", callback_data="action:preview")],
-            [InlineKeyboardButton("Toggle Mention", callback_data="toggle:mention")],
+             InlineKeyboardButton("Set Mention", callback_data="set:mention")],
+            [InlineKeyboardButton("🪄 Preview Caption", callback_data="action:preview")],
             [InlineKeyboardButton("⬅️ Back", callback_data="nav:page2"),
              InlineKeyboardButton("✅ Done", callback_data="style:done")]
         ]
@@ -174,38 +171,26 @@ I can change video thumbnails/covers and style captions.
 /clear_prefix - Remove saved prefix
 /clear_suffix - Remove saved suffix
 /clear_all - Remove both prefix and suffix
-/set_link <url> - Wrap caption with clickable link
 /clear_link - Remove link wrapping
 """
     await update.message.reply_text(text, parse_mode='HTML')
 
 
-# --- new quick clear commands ---
+# --- clear commands ---
 async def clear_prefix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("prefix", None)
-    await update.message.reply_text("✅ Prefix cleared successfully!")
+    await update.message.reply_text("✅ Prefix cleared!")
 
 
 async def clear_suffix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("suffix", None)
-    await update.message.reply_text("✅ Suffix cleared successfully!")
+    await update.message.reply_text("✅ Suffix cleared!")
 
 
 async def clear_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("prefix", None)
     context.user_data.pop("suffix", None)
-    await update.message.reply_text("✅ Prefix & Suffix cleared successfully!")
-
-
-# --- new link wrap commands ---
-async def set_link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
-    if not args:
-        await update.message.reply_text("❌ Usage: /set_link <url>")
-        return
-    url = args[0]
-    context.user_data["link_wrap"] = url
-    await update.message.reply_text(f"✅ Link wrapping enabled:\n<code>{escape_html(url)}</code>", parse_mode='HTML')
+    await update.message.reply_text("✅ Prefix & Suffix cleared!")
 
 
 async def clear_link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -221,7 +206,7 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud.setdefault('caption_style', 'none')
     ud.setdefault('prefix', '')
     ud.setdefault('suffix', '')
-    ud.setdefault('mention_enabled', True)
+    ud.setdefault('mention_text', '')
     ud.setdefault('link_wrap', None)
 
     text, markup = build_settings_page(ud, page=1)
@@ -236,8 +221,8 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
     user_data = context.user_data
 
     if data.startswith("nav:"):
-        page = data.split(":", 1)[1]
-        text, markup = build_settings_page(user_data, page=int(page[-1]))
+        page = int(data[-1])
+        text, markup = build_settings_page(user_data, page=page)
         await query.edit_message_text(text, reply_markup=markup, parse_mode='HTML')
         return SETTINGS_MENU
 
@@ -261,25 +246,28 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
             await query.edit_message_text("✏️ Send your new Suffix text.")
             return SUFFIX_INPUT
         elif which == "link":
-            await query.edit_message_text("✏️ Send a valid URL to wrap your captions (send /cancel to abort).")
-            return PREFIX_INPUT  # reuse prefix state temporarily
-
-    if data.startswith("toggle:mention"):
-        user_data['mention_enabled'] = not user_data.get('mention_enabled', True)
-        text, markup = build_settings_page(user_data, page=3)
-        await query.edit_message_text(text, reply_markup=markup, parse_mode='HTML')
-        return SETTINGS_MENU
+            await query.edit_message_text("🔗 Send the URL to wrap your captions.")
+            return LINK_INPUT
+        elif which == "mention":
+            await query.edit_message_text("💬 Send your custom Mention text (like 'Join my channel - @fjiffyuv').")
+            return MENTION_INPUT
 
     if data.startswith("action:preview"):
-        sample = "🔥 Sample Movie [1080p]"
+        sample = "🔥 The Summer Hikaru Died S01 Ep 07 - 12 [Hindi-English-Japanese] 1080p HEVC 10bit WEB-DL ESub ~ Aᴍɪᴛ ~ [TW4ALL].mkv"
         prefix = user_data.get('prefix', '')
         suffix = user_data.get('suffix', '')
         style = user_data.get('caption_style', 'none')
+        mention_text = user_data.get('mention_text', '')
+        link_wrap = user_data.get('link_wrap')
+
         composed = f"{prefix} {sample}".strip()
         composed = insert_suffix_before_extension(composed, suffix)
+        if mention_text:
+            composed += f"\n\n{mention_text}"
         styled = apply_style_to_text(composed, style)
-        if user_data.get('link_wrap'):
-            styled = f'<a href="{escape_html(user_data["link_wrap"])}">{styled}</a>'
+        if link_wrap:
+            styled = f'<a href="{escape_html(link_wrap)}">{styled}</a>'
+
         await query.message.reply_text(f"🪄 <b>Preview:</b>\n{styled}", parse_mode='HTML')
         return SETTINGS_MENU
 
@@ -292,6 +280,7 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
     return SETTINGS_MENU
 
 
+# Input handlers
 async def prefix_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['prefix'] = update.message.text.strip()
     await update.message.reply_text("✅ Prefix updated.")
@@ -303,6 +292,22 @@ async def prefix_input_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 async def suffix_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['suffix'] = update.message.text.strip()
     await update.message.reply_text("✅ Suffix updated.")
+    text, markup = build_settings_page(context.user_data, page=3)
+    await update.message.reply_text(text, reply_markup=markup, parse_mode='HTML')
+    return SETTINGS_MENU
+
+
+async def link_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['link_wrap'] = update.message.text.strip()
+    await update.message.reply_text("✅ Link wrap URL saved!")
+    text, markup = build_settings_page(context.user_data, page=3)
+    await update.message.reply_text(text, reply_markup=markup, parse_mode='HTML')
+    return SETTINGS_MENU
+
+
+async def mention_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['mention_text'] = update.message.text.strip()
+    await update.message.reply_text("✅ Mention text saved!")
     text, markup = build_settings_page(context.user_data, page=3)
     await update.message.reply_text(text, reply_markup=markup, parse_mode='HTML')
     return SETTINGS_MENU
@@ -343,9 +348,8 @@ async def handle_url_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = await update.message.reply_photo(photo=res.content, caption="🖼️ Image fetched.")
             context.user_data["thumb_file_id"] = msg.photo[-1].file_id
             await update.message.reply_text("✅ Thumbnail saved from URL!")
-        except Exception as e:
+        except Exception:
             await update.message.reply_text("❌ Failed to download image.")
-    return
 
 
 async def send_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -357,16 +361,12 @@ async def send_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video_file_id = update.message.video.file_id if update.message.video else update.message.document.file_id
     ud = context.user_data
     prefix, suffix = ud.get('prefix', ''), ud.get('suffix', '')
-    caption_style, mention_enabled = ud.get('caption_style', 'none'), ud.get('mention_enabled', True)
+    caption_style = ud.get('caption_style', 'none')
+    mention_text = ud.get('mention_text', '')
     link_wrap = ud.get('link_wrap', None)
 
     caption = update.message.caption or ""
-    main_caption, mention_text = caption, ""
-    if "\n\n" in caption:
-        parts = caption.split("\n\n", 1)
-        main_caption, mention_text = parts[0], parts[1] if mention_enabled else ""
-
-    composed = f"{prefix} {main_caption}".strip()
+    composed = f"{prefix} {caption}".strip()
     composed = insert_suffix_before_extension(composed, suffix)
     if mention_text:
         composed += f"\n\n{mention_text}"
@@ -400,6 +400,8 @@ def main():
             SETTINGS_MENU: [CallbackQueryHandler(settings_button_handler)],
             PREFIX_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, prefix_input_handler)],
             SUFFIX_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, suffix_input_handler)],
+            LINK_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, link_input_handler)],
+            MENTION_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, mention_input_handler)],
         },
         fallbacks=[CommandHandler("cancel", cancel_settings)],
         allow_reentry=True,
@@ -409,12 +411,9 @@ def main():
     app.add_handler(CommandHandler("thumb", view_thumb_command))
     app.add_handler(CommandHandler("clear", clear_thumb_command))
     app.add_handler(settings_conv)
-
-    # New feature handlers
     app.add_handler(CommandHandler("clear_prefix", clear_prefix_command))
     app.add_handler(CommandHandler("clear_suffix", clear_suffix_command))
     app.add_handler(CommandHandler("clear_all", clear_all_command))
-    app.add_handler(CommandHandler("set_link", set_link_command))
     app.add_handler(CommandHandler("clear_link", clear_link_command))
 
     app.add_handler(MessageHandler(filters.PHOTO, save_thumb))
@@ -432,3 +431,4 @@ if __name__ == "__main__":
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.error(f"Failed to start bot: {e}")
+            
