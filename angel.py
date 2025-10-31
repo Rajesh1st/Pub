@@ -506,4 +506,13 @@ def main():
     app.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, send_video))
 
     logger.info("🚀 Bot is running...")
-    app.run_polling(allowed_up
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Failed to start bot: {e}")
