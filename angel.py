@@ -184,10 +184,17 @@ I can change video thumbnails/covers and style captions.
     await update.message.reply_text(text, parse_mode='HTML')
 
 
+# /clear_everything command with confirmation
 async def clear_everything_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    for key in ["prefix", "suffix", "mention_text", "link_wrap", "caption_style"]:
-        context.user_data.pop(key, None)
-    await update.message.reply_text("🧹 All settings cleared!")
+    keyboard = [
+        [InlineKeyboardButton("✅ Yes, Clear All", callback_data="clear:all_cmd"),
+         InlineKeyboardButton("❌ No, Cancel", callback_data="cancel:clear_all_cmd")]
+    ]
+    await update.message.reply_text(
+        "⚠️ Are you sure you want to clear ALL your saved settings?",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='HTML'
+    )
 
 
 # -------------------------
@@ -272,6 +279,17 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
     if data == "cancel:clear_all":
         text, markup = build_settings_page(user_data, page=3)
         await query.edit_message_text("❌ Clear all cancelled.\n\n" + text, reply_markup=markup, parse_mode='HTML')
+        return SETTINGS_MENU
+
+        # Handle confirmation from /clear_everything command
+    if data == "clear:all_cmd":
+        for key in ["prefix", "suffix", "mention_text", "link_wrap", "caption_style"]:
+            user_data.pop(key, None)
+        await query.edit_message_text("🧹 All settings cleared successfully!")
+        return SETTINGS_MENU
+
+    if data == "cancel:clear_all_cmd":
+        await query.edit_message_text("❌ Clear all cancelled.")
         return SETTINGS_MENU
 
     # Preview
