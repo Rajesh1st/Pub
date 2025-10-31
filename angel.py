@@ -151,8 +151,11 @@ def build_settings_page(user_data: dict, page: int = 1) -> (str, InlineKeyboardM
              InlineKeyboardButton("Set Suffix", callback_data="set:suffix")],
             [InlineKeyboardButton("Set Link Wrap", callback_data="set:link"),
              InlineKeyboardButton("Set Mention", callback_data="set:mention")],
-            [InlineKeyboardButton("🗑 Clear Mention", callback_data="clear:mention"),
-             InlineKeyboardButton("🧹 Clear All Settings", callback_data="confirm:clear_all")],
+            [InlineKeyboardButton("🗑 Clear Prefix", callback_data="clear:prefix"),
+             InlineKeyboardButton("🗑 Clear Suffix", callback_data="clear:suffix")],
+            [InlineKeyboardButton("🗑 Clear Link", callback_data="clear:link"),
+             InlineKeyboardButton("🗑 Clear Mention", callback_data="clear:mention")],
+            [InlineKeyboardButton("🧹 Clear All Settings", callback_data="confirm:clear_all")],
             [InlineKeyboardButton("🪄 Preview Caption", callback_data="action:preview")],
             [InlineKeyboardButton("⬅️ Back", callback_data="nav:page2"),
              InlineKeyboardButton("✅ Done", callback_data="style:done")]
@@ -176,7 +179,6 @@ I can change video thumbnails/covers and style captions.
 /clear - Clear thumbnail
 /clear_prefix - Remove saved prefix
 /clear_suffix - Remove saved suffix
-/clear_all - Remove both prefix and suffix
 /clear_link - Remove link wrapping
 /clear_mention - Remove mention text
 /clear_everything - 🧹 Clear all saved settings at once
@@ -184,7 +186,26 @@ I can change video thumbnails/covers and style captions.
     await update.message.reply_text(text, parse_mode='HTML')
 
 
-# /clear_everything command with confirmation
+async def clear_prefix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop("prefix", None)
+    await update.message.reply_text("✅ Prefix cleared!")
+
+
+async def clear_suffix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop("suffix", None)
+    await update.message.reply_text("✅ Suffix cleared!")
+
+
+async def clear_link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop("link_wrap", None)
+    await update.message.reply_text("✅ Link wrap cleared!")
+
+
+async def clear_mention_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop("mention_text", None)
+    await update.message.reply_text("✅ Mention text cleared!")
+
+
 async def clear_everything_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("✅ Yes, Clear All", callback_data="clear:all_cmd"),
@@ -250,6 +271,27 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text(prompts[which])
         return {"prefix": PREFIX_INPUT, "suffix": SUFFIX_INPUT, "link": LINK_INPUT, "mention": MENTION_INPUT}[which]
 
+    # Clear prefix
+    if data == "clear:prefix":
+        user_data.pop("prefix", None)
+        text, markup = build_settings_page(user_data, page=3)
+        await query.edit_message_text("✅ Prefix cleared!\n\n" + text, reply_markup=markup, parse_mode='HTML')
+        return SETTINGS_MENU
+
+    # Clear suffix
+    if data == "clear:suffix":
+        user_data.pop("suffix", None)
+        text, markup = build_settings_page(user_data, page=3)
+        await query.edit_message_text("✅ Suffix cleared!\n\n" + text, reply_markup=markup, parse_mode='HTML')
+        return SETTINGS_MENU
+
+    # Clear link
+    if data == "clear:link":
+        user_data.pop("link_wrap", None)
+        text, markup = build_settings_page(user_data, page=3)
+        await query.edit_message_text("✅ Link wrap cleared!\n\n" + text, reply_markup=markup, parse_mode='HTML')
+        return SETTINGS_MENU
+
     # Clear mention
     if data == "clear:mention":
         user_data.pop("mention_text", None)
@@ -257,39 +299,44 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text("✅ Mention text cleared!\n\n" + text, reply_markup=markup, parse_mode='HTML')
         return SETTINGS_MENU
 
-    # Confirm before clearing all
+    # Confirm before clear all from button
     if data == "confirm:clear_all":
         keyboard = [
             [InlineKeyboardButton("✅ Yes, Clear All", callback_data="clear:all"),
              InlineKeyboardButton("❌ No, Cancel", callback_data="cancel:clear_all")]
         ]
         await query.edit_message_text("⚠️ Are you sure you want to clear all saved settings?",
-                                      reply_markup=InlineKeyboardMarkup(keyboard))
+                                      reply_markup=InlineKeyboardMarkup(keyboard),
+                                      parse_mode='HTML')
         return SETTINGS_MENU
 
-    # Clear all confirmed
+    # Clear all confirmed (button version)
     if data == "clear:all":
         for key in ["prefix", "suffix", "mention_text", "link_wrap", "caption_style"]:
             user_data.pop(key, None)
         text, markup = build_settings_page(user_data, page=3)
-        await query.edit_message_text("🧹 All settings cleared!\n\n" + text, reply_markup=markup, parse_mode='HTML')
+        await query.edit_message_text("🧹 All settings cleared!\n\n" + text,
+                                      reply_markup=markup, parse_mode='HTML')
         return SETTINGS_MENU
 
-    # Cancel clear all
+    # Cancel clear all (button version)
     if data == "cancel:clear_all":
         text, markup = build_settings_page(user_data, page=3)
-        await query.edit_message_text("❌ Clear all cancelled.\n\n" + text, reply_markup=markup, parse_mode='HTML')
+        await query.edit_message_text("❌ Clear all cancelled.\n\n" + text,
+                                      reply_markup=markup, parse_mode='HTML')
         return SETTINGS_MENU
 
-        # Handle confirmation from /clear_everything command
+    # Clear all confirmed (command version)
     if data == "clear:all_cmd":
         for key in ["prefix", "suffix", "mention_text", "link_wrap", "caption_style"]:
             user_data.pop(key, None)
-        await query.edit_message_text("🧹 All settings cleared successfully!")
+        await query.edit_message_text("🧹 All settings cleared successfully!",
+                                      parse_mode='HTML')
         return SETTINGS_MENU
 
+    # Cancel clear all (command version)
     if data == "cancel:clear_all_cmd":
-        await query.edit_message_text("❌ Clear all cancelled.")
+        await query.edit_message_text("❌ Clear all cancelled.", parse_mode='HTML')
         return SETTINGS_MENU
 
     # Preview
@@ -448,6 +495,10 @@ def main():
     app.add_handler(CommandHandler("thumb", view_thumb_command))
     app.add_handler(CommandHandler("clear", clear_thumb_command))
     app.add_handler(settings_conv)
+    app.add_handler(CommandHandler("clear_prefix", clear_prefix_command))
+    app.add_handler(CommandHandler("clear_suffix", clear_suffix_command))
+    app.add_handler(CommandHandler("clear_link", clear_link_command))
+    app.add_handler(CommandHandler("clear_mention", clear_mention_command))
     app.add_handler(CommandHandler("clear_everything", clear_everything_command))
 
     app.add_handler(MessageHandler(filters.PHOTO, save_thumb))
@@ -455,14 +506,4 @@ def main():
     app.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, send_video))
 
     logger.info("🚀 Bot is running...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
-    except Exception as e:
-        logger.error(f"Failed to start bot: {e}")
-        
+    app.run_polling(allowed_up
