@@ -14,7 +14,7 @@ from telegram.ext import (
     ConversationHandler,
 )
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
 # Setup logging
@@ -28,269 +28,402 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Bot Configuration
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Conversation states
-SETTINGS_MENU = range(1)
+SETTINGS_MENU, PREFIX_INPUT, SUFFIX_INPUT = range(3)
 
-# URL pattern for image detection
 URL_PATTERN = re.compile(
-    r'https?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+\.(?:jpg|jpeg|png|webp|bmp)(?:\?.*)?',
+    r'https?://(?:[a-zA-Z0-9$-_@.&+!*\'(),]|(?:%[0-9a-fA-F]{2}))+'
+    r'\.(?:jpg|jpeg|png|webp|bmp)(?:\?.*)?$',
     re.IGNORECASE
 )
 
-# --- Command Handlers ---
+VIDEO_EXTENSIONS = ("mkv", "mp4", "avi", "mov", "webm", "m4v", "flv")
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /start command"""
-    user_id = update.message.from_user.id
-    logger.info(f"Start command received from user {user_id}")
-    welcome_text = """
+
+# -------------------------
+# Helper functions
+# -------------------------
+def insert_suffix_before_extension(filename: str, suffix_text: str) -> str:
+    if not suffix_text:
+        return filename
+    m = re.search(r'\.([A-Za-z0-9]{1,5})$', filename)
+    if m:
+        ext = m.group(1)
+        if ext.lower() in VIDEO_EXTENSIONS:
+            base = filename[:m.start()]
+            return f"{base} {suffix_text}.{ext}"
+    return f"{filename} {suffix_text}"
+
+
+def escape_html(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+    )
+
+
+def apply_style_to_text(text: str, style: str) -> str:
+    if not text:
+        return text
+    if style == "blockquote":
+        lines = text.splitlines()
+        quoted = "\n".join("› " + ln for ln in lines)
+        return f"<i>{escape_html(quoted)}</i>"
+    if style == "pre":
+        return f"<pre>{escape_html(text)}</pre>"
+    if style == "bold":
+        return f"<b>{escape_html(text)}</b>"
+    if style == "italic":
+        return f"<i>{escape_html(text)}</i>"
+    if style == "monospace":
+        return f"<code>{escape_html(text)}</code>"
+    if style == "underline":
+        return f"<u>{escape_html(text)}</u>"
+    if style == "strikethrough":
+        return f"<s>{escape_html(text)}</s>"
+    if style == "spoiler":
+        return f"<tg-spoiler>{escape_html(text)}</tg-spoiler>"
+    return escape_html(text)
+
+
+def build_settings_page(user_data: dict, page: int = 1) -> (str, InlineKeyboardMarkup):
+    user_id = user_data.get("_id_placeholder", "You")
+    caption_style = user_data.get("caption_style", "none")
+    prefix = user_data.get("prefix", "")
+    suffix = user_data.get("suffix", "")
+    mention_on = user_data.get("mention_enabled", True)
+    link_wrap = user_data.get("link_wrap", None)
+
+    if page == 1:
+        text = f"""
+⚙️ <b>Settings — Page 1 / 3</b>
+
+<b>Current style:</b> <code>{caption_style}</code>
+<b>Prefix:</b> <code>{prefix or '-'}</code>
+<b>Suffix:</b> <code>{suffix or '-'}</code>
+<b>Link wrap:</b> <code>{link_wrap or '-'}</code>
+<b>Mention (two newlines):</b> <code>{'On' if mention_on else 'Off'}</code>
+
+<b>Choose a basic caption style:</b>
+"""
+        keyboard = [
+            [InlineKeyboardButton("𝐁𝐨𝐥𝐝", callback_data="style:bold"),
+             InlineKeyboardButton("𝘐𝘵𝘢𝘭𝘪𝘤", callback_data="style:italic")],
+            [InlineKeyboardButton("𝙼𝚘𝚗𝚘𝚜𝚙𝚊𝚌𝚎", callback_data="style:monospace"),
+             InlineKeyboardButton("Underline", callback_data="style:underline")],
+            [InlineKeyboardButton("Strikethrough", callback_data="style:strikethrough"),
+             InlineKeyboardButton("Spoiler", callback_data="style:spoiler")],
+            [InlineKeyboardButton("Next ➡️", callback_data="nav:page2"),
+             InlineKeyboardButton("🗑 Clear Style", callback_data="style:none")],
+            [InlineKeyboardButton("✅ Done", callback_data="style:done")]
+        ]
+        return text, InlineKeyboardMarkup(keyboard)
+
+    elif page == 2:
+        text = f"""
+⚙️ <b>Settings — Page 2 / 3</b>
+
+<b>Extra formats:</b>
+"""
+        keyboard = [
+            [InlineKeyboardButton("❝ Blockquote", callback_data="style:blockquote"),
+             InlineKeyboardButton("⤷ Pre (code block)", callback_data="style:pre")],
+            [InlineKeyboardButton("⬅️ Back", callback_data="nav:page1"),
+             InlineKeyboardButton("Next ➡️", callback_data="nav:page3")],
+            [InlineKeyboardButton("✅ Done", callback_data="style:done")]
+        ]
+        return text, InlineKeyboardMarkup(keyboard)
+
+    else:
+        text = f"""
+⚙️ <b>Settings — Page 3 / 3</b>
+
+<b>Prefix:</b> <code>{prefix or '-'}</code>
+<b>Suffix:</b> <code>{suffix or '-'}</code>
+<b>Link wrap:</b> <code>{link_wrap or '-'}</code>
+<b>Mention (two newlines):</b> <code>{'On' if mention_on else 'Off'}</code>
+"""
+        keyboard = [
+            [InlineKeyboardButton("Set Prefix", callback_data="set:prefix"),
+             InlineKeyboardButton("Set Suffix", callback_data="set:suffix")],
+            [InlineKeyboardButton("Set Link Wrap", callback_data="set:link"),
+             InlineKeyboardButton("🪄 Preview Caption", callback_data="action:preview")],
+            [InlineKeyboardButton("Toggle Mention", callback_data="toggle:mention")],
+            [InlineKeyboardButton("⬅️ Back", callback_data="nav:page2"),
+             InlineKeyboardButton("✅ Done", callback_data="style:done")]
+        ]
+        return text, InlineKeyboardMarkup(keyboard)
+
+
+# -------------------------
+# Commands
+# -------------------------
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = """
 🤖 <b>Thumbnail Cover Changer Bot</b>
 
-I can change video thumbnails/covers! Here's how to use me:
-
-<b>Step 1: Send me a thumbnail image (as photo or URL)</b>
-<b>Step 2: Send me a video file</b>
-<b>Step 3: I'll apply your thumbnail and send back the video</b>
+I can change video thumbnails/covers and style captions.
 
 <b>Commands:</b>
-<b>/start - Show this help message</b>
-<b>/thumb - View your current saved thumbnail</b>
-<b>/clear - Clear your saved thumbnail</b>
-<b>/settings - Configure caption styles</b>
-    """
-    await update.message.reply_text(welcome_text, parse_mode='HTML')
-    logger.info(f"Start message sent to user {user_id}")
+/start - Show help
+/settings - Configure caption styles, prefix/suffix/link
+/thumb - View saved thumbnail
+/clear - Clear thumbnail
+/clear_prefix - Remove saved prefix
+/clear_suffix - Remove saved suffix
+/clear_all - Remove both prefix and suffix
+/set_link <url> - Wrap caption with clickable link
+/clear_link - Remove link wrapping
+"""
+    await update.message.reply_text(text, parse_mode='HTML')
 
-async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle /settings command"""
-    user_id = update.message.from_user.id
-    logger.info(f"Settings command received from user {user_id}")
-    
-    # Set default caption style to bold if not set
-    if 'caption_style' not in context.user_data:
-        context.user_data['caption_style'] = 'bold'
-    
-    # Check thumbnail status
-    thumb_status = "✅ Saved" if context.user_data.get("thumb_file_id") else "❌ Not Saved"
-    current_style = context.user_data.get('caption_style', 'bold')
-    
-    settings_text = f"""
-⚙️ <b>Settings Menu</b>
 
-👤 <b>User ID:</b> <code>{user_id}</code>
-🖼️ <b>Thumbnail Status:</b> {thumb_status}
-📝 <b>Current Caption Style:</b> {current_style.title()}
+# --- new quick clear commands ---
+async def clear_prefix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop("prefix", None)
+    await update.message.reply_text("✅ Prefix cleared successfully!")
 
-<b>Choose your preferred caption style:</b>
-    """
-    
-    keyboard = [
-        [InlineKeyboardButton("𝐁𝐨𝐥𝐝", callback_data="style_bold")],
-        [InlineKeyboardButton("𝘐𝘵𝘢𝘭𝘪𝘤", callback_data="style_italic")],
-        [InlineKeyboardButton("𝙼𝚘𝚗𝚘𝚜𝚙𝚊𝚌𝚎", callback_data="style_monospace")],
-        [InlineKeyboardButton("🗑️ Clear Style", callback_data="style_clear")],
-        [InlineKeyboardButton("✅ Done", callback_data="style_done")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(settings_text, reply_markup=reply_markup, parse_mode='HTML')
+
+async def clear_suffix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop("suffix", None)
+    await update.message.reply_text("✅ Suffix cleared successfully!")
+
+
+async def clear_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop("prefix", None)
+    context.user_data.pop("suffix", None)
+    await update.message.reply_text("✅ Prefix & Suffix cleared successfully!")
+
+
+# --- new link wrap commands ---
+async def set_link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    if not args:
+        await update.message.reply_text("❌ Usage: /set_link <url>")
+        return
+    url = args[0]
+    context.user_data["link_wrap"] = url
+    await update.message.reply_text(f"✅ Link wrapping enabled:\n<code>{escape_html(url)}</code>", parse_mode='HTML')
+
+
+async def clear_link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop("link_wrap", None)
+    await update.message.reply_text("✅ Link wrapping disabled.")
+
+
+# -------------------------
+# Settings Handlers
+# -------------------------
+async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ud = context.user_data
+    ud.setdefault('caption_style', 'none')
+    ud.setdefault('prefix', '')
+    ud.setdefault('suffix', '')
+    ud.setdefault('mention_enabled', True)
+    ud.setdefault('link_wrap', None)
+
+    text, markup = build_settings_page(ud, page=1)
+    await update.message.reply_text(text, reply_markup=markup, parse_mode='HTML')
     return SETTINGS_MENU
 
-async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle button presses in settings menu"""
+
+async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
+    data = query.data or ""
     user_data = context.user_data
-    user_id = query.from_user.id
-    
-    if query.data == "style_bold":
-        user_data['caption_style'] = 'bold'
-        style_text = "𝐁𝐨𝐥𝐝"
-    elif query.data == "style_italic":
-        user_data['caption_style'] = 'italic'
-        style_text = "𝘐𝘵𝘢𝘭𝘪𝘤"
-    elif query.data == "style_monospace":
-        user_data['caption_style'] = 'monospace'
-        style_text = "𝙼𝚘𝚗𝚘𝚜𝚙𝚊𝚌𝚎"
-    elif query.data == "style_clear":
+
+    if data.startswith("nav:"):
+        page = data.split(":", 1)[1]
+        text, markup = build_settings_page(user_data, page=int(page[-1]))
+        await query.edit_message_text(text, reply_markup=markup, parse_mode='HTML')
+        return SETTINGS_MENU
+
+    if data.startswith("style:"):
+        style = data.split(":", 1)[1]
+        if style == "done":
+            await query.edit_message_text("✅ <b>Settings saved!</b>", parse_mode='HTML')
+            return ConversationHandler.END
+        user_data['caption_style'] = style
+        text, markup = build_settings_page(user_data, page=1)
+        await query.edit_message_text(f"✅ Style set to <code>{style}</code>\n\n{text}",
+                                      reply_markup=markup, parse_mode='HTML')
+        return SETTINGS_MENU
+
+    if data.startswith("set:"):
+        which = data.split(":", 1)[1]
+        if which == "prefix":
+            await query.edit_message_text("✏️ Send your new Prefix text.")
+            return PREFIX_INPUT
+        elif which == "suffix":
+            await query.edit_message_text("✏️ Send your new Suffix text.")
+            return SUFFIX_INPUT
+        elif which == "link":
+            await query.edit_message_text("✏️ Send a valid URL to wrap your captions (send /cancel to abort).")
+            return PREFIX_INPUT  # reuse prefix state temporarily
+
+    if data.startswith("toggle:mention"):
+        user_data['mention_enabled'] = not user_data.get('mention_enabled', True)
+        text, markup = build_settings_page(user_data, page=3)
+        await query.edit_message_text(text, reply_markup=markup, parse_mode='HTML')
+        return SETTINGS_MENU
+
+    if data.startswith("action:preview"):
+        sample = "🔥 Sample Movie [1080p]"
+        prefix = user_data.get('prefix', '')
+        suffix = user_data.get('suffix', '')
+        style = user_data.get('caption_style', 'none')
+        composed = f"{prefix} {sample}".strip()
+        composed = insert_suffix_before_extension(composed, suffix)
+        styled = apply_style_to_text(composed, style)
+        if user_data.get('link_wrap'):
+            styled = f'<a href="{escape_html(user_data["link_wrap"])}">{styled}</a>'
+        await query.message.reply_text(f"🪄 <b>Preview:</b>\n{styled}", parse_mode='HTML')
+        return SETTINGS_MENU
+
+    if data == "style:none":
         user_data['caption_style'] = 'none'
-        style_text = "Normal"
-    elif query.data == "style_done":
-        await query.edit_message_text("✅ <b>Settings saved successfully!</b>", parse_mode='HTML')
-        logger.info(f"Settings saved for user {user_id}")
-        return ConversationHandler.END
-    
-    # Update the settings menu with new style
-    thumb_status = "✅ Saved" if user_data.get("thumb_file_id") else "❌ Not Saved"
-    current_style = user_data.get('caption_style', 'bold')
-    
-    settings_text = f"""
-⚙️ <b>Settings Menu</b>
+        text, markup = build_settings_page(user_data, page=1)
+        await query.edit_message_text("✅ Style cleared.\n\n" + text, reply_markup=markup, parse_mode='HTML')
+        return SETTINGS_MENU
 
-👤 <b>User ID:</b> <code>{user_id}</code>
-🖼️ <b>Thumbnail Status:</b> {thumb_status}
-📝 <b>Current Caption Style:</b> {current_style.title()}
-
-✅ <b>Caption style set to: {style_text}</b>
-
-<b>Choose your preferred caption style:</b>
-    """
-    
-    keyboard = [
-        [InlineKeyboardButton("𝐁𝐨𝐥𝐝", callback_data="style_bold")],
-        [InlineKeyboardButton("𝘐𝘵𝘢𝘭𝘪𝘤", callback_data="style_italic")],
-        [InlineKeyboardButton("𝙼𝚘𝚗𝚘𝚜𝚙𝚊𝚌𝚎", callback_data="style_monospace")],
-        [InlineKeyboardButton("🗑️ Clear Style", callback_data="style_clear")],
-        [InlineKeyboardButton("✅ Done", callback_data="style_done")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(settings_text, reply_markup=reply_markup, parse_mode='HTML')
-    logger.info(f"Caption style changed to {current_style} for user {user_id}")
     return SETTINGS_MENU
 
-async def view_thumb_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /thumb command to view current thumbnail"""
+
+async def prefix_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['prefix'] = update.message.text.strip()
+    await update.message.reply_text("✅ Prefix updated.")
+    text, markup = build_settings_page(context.user_data, page=3)
+    await update.message.reply_text(text, reply_markup=markup, parse_mode='HTML')
+    return SETTINGS_MENU
+
+
+async def suffix_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['suffix'] = update.message.text.strip()
+    await update.message.reply_text("✅ Suffix updated.")
+    text, markup = build_settings_page(context.user_data, page=3)
+    await update.message.reply_text(text, reply_markup=markup, parse_mode='HTML')
+    return SETTINGS_MENU
+
+
+async def cancel_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Settings menu closed.")
+    return ConversationHandler.END
+
+
+# -------------------------
+# Thumbnail / Video handlers
+# -------------------------
+async def view_thumb_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thumb_file_id = context.user_data.get("thumb_file_id")
     if thumb_file_id:
-        try:
-            await update.message.reply_photo(
-                thumb_file_id,
-                caption="📷 <b>Your Current Thumbnail</b>\n\nSend a video to apply this thumbnail!",
-                parse_mode='HTML'
-            )
-            logger.info("Thumbnail sent to user")
-        except Exception as e:
-            logger.error(f"Error sending thumbnail: {e}")
-            await update.message.reply_text("❌ Error displaying thumbnail. Please set a new one.")
+        await update.message.reply_photo(thumb_file_id, caption="📷 Your current thumbnail", parse_mode='HTML')
     else:
-        await update.message.reply_text("📷 <b>No Thumbnail Saved</b>\n\nPlease send me a photo first!", parse_mode='HTML')
+        await update.message.reply_text("📷 No thumbnail saved.")
 
-async def clear_thumb_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /clear command to remove saved thumbnail"""
+
+async def clear_thumb_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("thumb_file_id", None)
-    await update.message.reply_text("✅ Thumbnail cleared successfully!")
-    logger.info("Thumbnail cleared")
+    await update.message.reply_text("✅ Thumbnail cleared.")
 
-# Save photo as thumbnail
+
 async def save_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["thumb_file_id"] = update.message.photo[-1].file_id
-    await update.message.reply_text("✅ Thumbnail saved! Now send a video to apply it.")
+    await update.message.reply_text("✅ Thumbnail saved!")
 
-# Handle URL thumbnails
+
 async def handle_url_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle image URLs for thumbnails"""
-    url = update.message.text
-    user_id = update.message.from_user.id
-    
-    try:
-        # Validate URL pattern
-        if not URL_PATTERN.match(url):
-            await update.message.reply_text("❌ Please send a valid image URL (jpg, jpeg, png, webp, bmp)")
-            return
-        
-        # Download image
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        
-        # Check content type
-        content_type = response.headers.get('content-type', '')
-        if not content_type.startswith('image/'):
-            await update.message.reply_text("❌ URL does not point to a valid image")
-            return
-        
-        # Send image to Telegram to get file_id
-        message = await update.message.reply_photo(
-            photo=response.content,
-            caption="🖼️ Downloaded image from URL..."
-        )
-        
-        # Get the file_id from the sent photo
-        thumb_file_id = message.photo[-1].file_id
-        context.user_data["thumb_file_id"] = thumb_file_id
-        
-        await update.message.reply_text("✅ Thumbnail saved from URL! Now send a video to apply it.")
-        logger.info(f"Thumbnail saved from URL for user {user_id}")
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"URL download error for user {user_id}: {e}")
-        await update.message.reply_text("❌ Failed to download image from URL. Please check the link and try again.")
-    except Exception as e:
-        logger.error(f"URL thumbnail error for user {user_id}: {e}")
-        await update.message.reply_text("❌ Error processing URL. Please try a different image URL.")
+    url = update.message.text.strip()
+    if URL_PATTERN.match(url):
+        try:
+            res = requests.get(url, timeout=10)
+            res.raise_for_status()
+            msg = await update.message.reply_photo(photo=res.content, caption="🖼️ Image fetched.")
+            context.user_data["thumb_file_id"] = msg.photo[-1].file_id
+            await update.message.reply_text("✅ Thumbnail saved from URL!")
+        except Exception as e:
+            await update.message.reply_text("❌ Failed to download image.")
+    return
 
-# Send video with saved cover and styled caption
+
 async def send_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    thumb_file_id = context.user_data.get("thumb_file_id")
-    if not thumb_file_id:
+    thumb = context.user_data.get("thumb_file_id")
+    if not thumb:
         await update.message.reply_text("⚠️ Please send a thumbnail first.")
         return
 
-    video_file_id = update.message.video.file_id
-    original_caption = update.message.caption or ""
-    
-    # Apply caption style
-    caption_style = context.user_data.get('caption_style', 'bold')
-    if caption_style == 'bold' and original_caption:
-        styled_caption = f"<b>{original_caption}</b>"
-    elif caption_style == 'italic' and original_caption:
-        styled_caption = f"<i>{original_caption}</i>"
-    elif caption_style == 'monospace' and original_caption:
-        styled_caption = f"<code>{original_caption}</code>"
-    else:
-        styled_caption = original_caption
+    video_file_id = update.message.video.file_id if update.message.video else update.message.document.file_id
+    ud = context.user_data
+    prefix, suffix = ud.get('prefix', ''), ud.get('suffix', '')
+    caption_style, mention_enabled = ud.get('caption_style', 'none'), ud.get('mention_enabled', True)
+    link_wrap = ud.get('link_wrap', None)
+
+    caption = update.message.caption or ""
+    main_caption, mention_text = caption, ""
+    if "\n\n" in caption:
+        parts = caption.split("\n\n", 1)
+        main_caption, mention_text = parts[0], parts[1] if mention_enabled else ""
+
+    composed = f"{prefix} {main_caption}".strip()
+    composed = insert_suffix_before_extension(composed, suffix)
+    if mention_text:
+        composed += f"\n\n{mention_text}"
+
+    final_caption = apply_style_to_text(composed, caption_style)
+    if link_wrap:
+        final_caption = f'<a href="{escape_html(link_wrap)}">{final_caption}</a>'
 
     await context.bot.send_video(
         chat_id=update.message.chat_id,
         video=video_file_id,
-        caption=styled_caption,
-        cover=thumb_file_id,  # ✅ Apply custom cover
+        caption=final_caption,
+        cover=thumb,
         parse_mode='HTML'
     )
 
-async def cancel_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancel the settings conversation"""
-    await update.message.reply_text("❌ Settings menu closed.")
-    return ConversationHandler.END
 
-def main() -> None:
-    """Start the bot."""
+# -------------------------
+# Main
+# -------------------------
+def main():
     if not BOT_TOKEN:
-        logger.error("BOT_TOKEN not found in environment variables. Exiting.")
+        logger.error("BOT_TOKEN missing.")
         return
 
-    # Create the Application and pass it your bot's token.
-    application = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
 
-    # --- Register Handlers ---
-    
-    # Command Handlers
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("thumb", view_thumb_command))
-    application.add_handler(CommandHandler("clear", clear_thumb_command))
-    
-    # Settings Conversation Handler
-    settings_conv_handler = ConversationHandler(
+    settings_conv = ConversationHandler(
         entry_points=[CommandHandler("settings", settings_command)],
         states={
-            SETTINGS_MENU: [CallbackQueryHandler(settings_button_handler)]
+            SETTINGS_MENU: [CallbackQueryHandler(settings_button_handler)],
+            PREFIX_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, prefix_input_handler)],
+            SUFFIX_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, suffix_input_handler)],
         },
-        fallbacks=[CommandHandler("cancel", cancel_settings)]
+        fallbacks=[CommandHandler("cancel", cancel_settings)],
+        allow_reentry=True,
     )
-    application.add_handler(settings_conv_handler)
 
-    # Message Handlers
-    application.add_handler(MessageHandler(filters.PHOTO, save_thumb))
-    application.add_handler(MessageHandler(filters.VIDEO, send_video))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url_thumb))
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("thumb", view_thumb_command))
+    app.add_handler(CommandHandler("clear", clear_thumb_command))
+    app.add_handler(settings_conv)
 
-    # Start the Bot
+    # New feature handlers
+    app.add_handler(CommandHandler("clear_prefix", clear_prefix_command))
+    app.add_handler(CommandHandler("clear_suffix", clear_suffix_command))
+    app.add_handler(CommandHandler("clear_all", clear_all_command))
+    app.add_handler(CommandHandler("set_link", set_link_command))
+    app.add_handler(CommandHandler("clear_link", clear_link_command))
+
+    app.add_handler(MessageHandler(filters.PHOTO, save_thumb))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url_thumb))
+    app.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, send_video))
+
     logger.info("Starting Thumbnail Cover Changer Bot...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+
 
 if __name__ == "__main__":
     try:
