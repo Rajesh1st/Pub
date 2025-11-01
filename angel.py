@@ -250,9 +250,8 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text(text, reply_markup=markup, parse_mode='HTML')
         return SETTINGS_MENU
 
-    # Style
     if data.startswith("style:"):
-    style = data.split(":", 1)[1]
+    style = data.split(":", 1)[1]  # <-- 4 spaces ka indentation
     if style == "done":
         await query.edit_message_text("✅ <b>Settings saved!</b>", parse_mode='HTML')
         return ConversationHandler.END
@@ -270,7 +269,7 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
     text, markup = build_settings_page(user_data, page=1)
     await query.edit_message_text(f"{msg}\n\n{text}", reply_markup=markup, parse_mode='HTML')
     return SETTINGS_MENU
-    
+        
     # Set inputs
     if data.startswith("set:"):
         which = data.split(":", 1)[1]
