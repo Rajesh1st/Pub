@@ -251,10 +251,10 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
         return SETTINGS_MENU
 
     if data.startswith("style:"):
-    style = data.split(":", 1)[1]  # <-- 4 spaces ka indentation
-    if style == "done":
-        await query.edit_message_text("✅ <b>Settings saved!</b>", parse_mode='HTML')
-        return ConversationHandler.END
+       style = data.split(":", 1)[1]  # <-- 4 spaces ka indentation
+       if style == "done":
+          await query.edit_message_text("✅ <b>Settings saved!</b>", parse_mode='HTML')
+          return ConversationHandler.END
 
     # multi-style toggle logic
     caption_styles = user_data.get("caption_styles", [])
