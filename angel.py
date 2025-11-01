@@ -65,33 +65,36 @@ def escape_html(text: str) -> str:
     )
 
 
-def apply_style_to_text(text: str, style: str) -> str:
-    if not text:
-        return text
-    if style == "blockquote":
-        return f"<blockquote>{escape_html(text)}</blockquote>"
-    if style == "pre":
-        return f"<pre>{escape_html(text)}</pre>"
-    if style == "bold":
-        return f"<b>{escape_html(text)}</b>"
-    if style == "italic":
-        return f"<i>{escape_html(text)}</i>"
-    if style == "monospace":
-        return f"<code>{escape_html(text)}</code>"
-    if style == "underline":
-        return f"<u>{escape_html(text)}</u>"
-    if style == "strikethrough":
-        return f"<s>{escape_html(text)}</s>"
-    if style == "spoiler":
-        return f"<tg-spoiler>{escape_html(text)}</tg-spoiler>"
-    return escape_html(text)
-
+def apply_styles_to_text(text: str, styles: list[str]) -> str:
+    """Apply multiple HTML styles in order to a given text."""
+    if not text or not styles:
+        return escape_html(text)
+    styled = escape_html(text)
+    for style in styles:
+        if style == "blockquote":
+            styled = f"<blockquote>{styled}</blockquote>"
+        elif style == "pre":
+            styled = f"<pre>{styled}</pre>"
+        elif style == "bold":
+            styled = f"<b>{styled}</b>"
+        elif style == "italic":
+            styled = f"<i>{styled}</i>"
+        elif style == "monospace":
+            styled = f"<code>{styled}</code>"
+        elif style == "underline":
+            styled = f"<u>{styled}</u>"
+        elif style == "strikethrough":
+            styled = f"<s>{styled}</s>"
+        elif style == "spoiler":
+            styled = f"<tg-spoiler>{styled}</tg-spoiler>"
+    return styled   
 
 # -------------------------
 # Build Settings Pages
 # -------------------------
 def build_settings_page(user_data: dict, page: int = 1) -> (str, InlineKeyboardMarkup):
-    caption_style = user_data.get("caption_style", "none")
+    caption_styles = user_data.get("caption_styles", [])
+    style_display = ", ".join(caption_styles) if caption_styles else "none"
     prefix = user_data.get("prefix", "")
     suffix = user_data.get("suffix", "")
     mention_text = user_data.get("mention_text", "")
@@ -101,7 +104,7 @@ def build_settings_page(user_data: dict, page: int = 1) -> (str, InlineKeyboardM
         text = f"""
 ⚙️ <b>Settings — Page 1 / 3</b>
 
-<b>Current style:</b> <code>{caption_style}</code>
+<b>Current style:</b> <code>{style_display}</code>
 <b>Prefix:</b> <code>{prefix or '-'}</code>
 <b>Suffix:</b> <code>{suffix or '-'}</code>
 <b>Link wrap:</b> <code>{link_wrap or '-'}</code>
@@ -249,16 +252,25 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
 
     # Style
     if data.startswith("style:"):
-        style = data.split(":", 1)[1]
-        if style == "done":
-            await query.edit_message_text("✅ <b>Settings saved!</b>", parse_mode='HTML')
-            return ConversationHandler.END
-        user_data['caption_style'] = style
-        text, markup = build_settings_page(user_data, page=1)
-        await query.edit_message_text(f"✅ Style set to <code>{style}</code>\n\n{text}",
-                                      reply_markup=markup, parse_mode='HTML')
-        return SETTINGS_MENU
+    style = data.split(":", 1)[1]
+    if style == "done":
+        await query.edit_message_text("✅ <b>Settings saved!</b>", parse_mode='HTML')
+        return ConversationHandler.END
 
+    # multi-style toggle logic
+    caption_styles = user_data.get("caption_styles", [])
+    if style in caption_styles:
+        caption_styles.remove(style)
+        msg = f"❌ Removed style <code>{style}</code>"
+    else:
+        caption_styles.append(style)
+        msg = f"✅ Added style <code>{style}</code>"
+
+    user_data["caption_styles"] = caption_styles
+    text, markup = build_settings_page(user_data, page=1)
+    await query.edit_message_text(f"{msg}\n\n{text}", reply_markup=markup, parse_mode='HTML')
+    return SETTINGS_MENU
+    
     # Set inputs
     if data.startswith("set:"):
         which = data.split(":", 1)[1]
@@ -341,10 +353,10 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
 
     # Preview
     if data.startswith("action:preview"):
-        sample = "🔥 The Summer Hikaru Died S01 Ep 07 - 12 [Hindi-English-Japanese] 1080p HEVC 10bit WEB-DL ESub ~ Aᴍɪᴛ ~ [TW4ALL].mkv"
+        sample = "The Summer Hikaru Died S01 Ep 07 - 12 [Hindi-English-Japanese] 1080p HEVC 10bit WEB-DL ESub ~ Aᴍɪᴛ ~ [TW4ALL].mkv"
         prefix = user_data.get('prefix', '')
         suffix = user_data.get('suffix', '')
-        style = user_data.get('caption_style', 'none')
+        styles = user_data.get('caption_styles', [])
         mention_text = user_data.get('mention_text', '')
         link_wrap = user_data.get('link_wrap')
 
@@ -352,7 +364,7 @@ async def settings_button_handler(update: Update, context: ContextTypes.DEFAULT_
         composed = insert_suffix_before_extension(composed, suffix)
         if mention_text:
             composed += f"\n\n{mention_text}"
-        styled = apply_style_to_text(composed, style)
+        styled = apply_style_to_text(composed, styles)
         if link_wrap:
             styled = f'<a href="{escape_html(link_wrap)}">{styled}</a>'
 
